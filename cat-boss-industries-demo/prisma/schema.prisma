@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+enum IncidentStatus {
+  open
+  in_progress
+  blocked
+  resolved
+}
+
+enum IncidentSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+model Incident {
+  id               String           @id @default(cuid())
+  title            String
+  description      String
+  status           IncidentStatus   @default(open)
+  severity         IncidentSeverity @default(medium)
+  escalationOwner  String?
+  escalationDueAt  DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  activities       ActivityLog[]
+}
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  incidentId  String
+  message     String
+  createdAt   DateTime @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, createdAt])
+}

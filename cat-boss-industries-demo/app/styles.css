@@ -1,0 +1,135 @@
+:root {
+  --bg-0: #f2ece0;
+  --bg-1: #f8f4ea;
+  --bg-2: #efe3d0;
+  --ink-0: #1d2833;
+  --ink-muted: #5b6773;
+  --line: #d4c3ab;
+  --primary: #005f73;
+  --primary-soft: #bfe8ef;
+  --danger: #af2018;
+  --warn: #c27600;
+  --ok: #166534;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink-0);
+  background:
+    radial-gradient(circle at 15% 10%, #fff9ef 0, #fff9ef 14%, transparent 35%),
+    linear-gradient(160deg, var(--bg-0), var(--bg-1) 45%, var(--bg-2));
+  min-height: 100vh;
+  font-family: "Avenir Next", "Trebuchet MS", sans-serif;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 20px;
+  margin-bottom: 12px;
+}
+
+.brand small {
+  display: block;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.nav {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.nav a {
+  color: var(--ink-0);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.main {
+  padding: 20px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.card-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 14px;
+}
+
+.card h3 {
+  margin: 0 0 8px;
+}
+
+.meta {
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.badge {
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+
+.badge.low,
+.badge.medium {
+  background: #ecf6ff;
+  border-color: #9ec5ea;
+}
+
+.badge.high {
+  background: #fff5da;
+  border-color: #e0b761;
+}
+
+.badge.critical {
+  background: #fde5e1;
+  border-color: #e47f72;
+  color: #6e0d07;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
