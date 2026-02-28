@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { canonicalAgentKey, normalizeAgentName } from "./agentName.js";
+import { ensureAgentsMdContract } from "./agentsMd.js";
 import { AGENTS_DIR, CODEX_DIR, MISSIONS_DIR, getStatusPath } from "./paths.js";
 import { ensureDir } from "./fs.js";
 import { parseGoals, readActiveMission, startDay } from "./mission.js";
@@ -12,8 +14,20 @@ import {
   updateStatus,
   writeStatus,
 } from "./status.js";
-import { attachSession, ensureSession, ensureWindow, focusWindow, hasTmux, sendKeys } from "./tmux.js";
-import type { AgentStatus, AgentSummary } from "./types.js";
+import {
+  attachSession,
+  currentSessionName,
+  ensureSession,
+  ensureWindow,
+  focusWindow,
+  hasTmux,
+  listWindowAlerts,
+  listWindowApprovalPrompts,
+  paneCurrentCommand,
+  sendKeys,
+  switchClient,
+} from "./tmux.js";
+import type { AgentStatus, AgentStatusPatch, AgentSummary } from "./types.js";
 
 function run(cmd: string, args: string[], cwd: string): void {
   const result = spawnSync(cmd, args, { cwd, encoding: "utf8" });
@@ -22,10 +36,15 @@ function run(cmd: string, args: string[], cwd: string): void {
   }
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
 export async function initRepo(): Promise<void> {
   await ensureDir(CODEX_DIR);
   await ensureDir(AGENTS_DIR);
   await ensureDir(MISSIONS_DIR);
+  await ensureAgentsMdContract();
   const readmePath = path.join(CODEX_DIR, "README.md");
   try {
     await fs.access(readmePath);
@@ -46,33 +65,45 @@ function makeWorktreePath(repoRoot: string, name: string): string {
 
 export async function startAgent(input: {
   agent: string;
-  goal: string;
+  goal?: string;
   worktree?: string;
   repoRoot?: string;
 }): Promise<{ statusPath: string; bootstrap: string; cwd: string }> {
+  const agent = normalizeAgentName(input.agent);
   const repoRoot = input.repoRoot ?? process.cwd();
+  const goal = input.goal?.trim() || "Agent-defined goal (pending)";
   await initRepo();
-  await ensureAgentDir(input.agent);
+  await ensureAgentDir(agent);
 
   let cwd = repoRoot;
   if (input.worktree) {
     const wtPath = makeWorktreePath(repoRoot, input.worktree);
-    const branch = `mc/${input.agent}`;
+    const branch = `mc/${agent}`;
     run("git", ["worktree", "add", "-b", branch, wtPath], repoRoot);
     cwd = wtPath;
   }
 
-  const status = makeInitialStatus(input.agent, input.goal, repoRoot, cwd);
-  const statusPath = await writeStatus(input.agent, status);
-  const bootstrap = bootstrapInstruction(input.agent, statusPath);
+  const status = makeInitialStatus(agent, goal, repoRoot, cwd);
+  const statusPath = await writeStatus(agent, status);
+  const bootstrap = bootstrapInstruction(agent, statusPath);
 
   if (hasTmux()) {
     ensureSession();
-    ensureWindow(input.agent);
-    sendKeys(input.agent, `cd ${cwd}`);
-    sendKeys(input.agent, "clear");
-    sendKeys(input.agent, "codex");
-    sendKeys(input.agent, `echo \"${bootstrap.replaceAll("\"", "\\\\\"")}\"`);
+    const createdWindow = ensureWindow(agent);
+    const paneCmd = paneCurrentCommand(agent).toLowerCase();
+    const codexActive = paneCmd === "codex" || paneCmd === "node";
+    if (createdWindow || !codexActive) {
+      sendKeys(agent, `cd ${cwd}`);
+      sendKeys(agent, `export MC_AGENT=${shellQuote(agent)}`);
+      sendKeys(agent, `export MC_STATUS_PATH=${shellQuote(statusPath)}`);
+      sendKeys(agent, `export MC_AGENT_CWD=${shellQuote(cwd)}`);
+      sendKeys(agent, "clear");
+      sendKeys(
+        agent,
+        `echo "MC ready: agent=${agent} cwd=${cwd} status=${statusPath}"`,
+      );
+      sendKeys(agent, "codex");
+    }
   }
 
   return { statusPath, bootstrap, cwd };
@@ -82,11 +113,29 @@ export async function listAgents(): Promise<AgentSummary[]> {
   return listStatuses();
 }
 
-export function focusAgent(agent: string): void {
+export function focusAgent(agent: string, opts?: { switchClient?: boolean }): void {
+  const normalized = normalizeAgentName(agent);
   if (!hasTmux()) {
     throw new Error("tmux is not installed.");
   }
-  focusWindow(agent);
+  ensureSession();
+  ensureWindow(normalized);
+  const insideTmux = Boolean(process.env.TMUX);
+  if (insideTmux) {
+    const current = currentSessionName();
+    if (current === "codex-mc") {
+      focusWindow(normalized);
+      return;
+    }
+    // Default behavior is to switch into mission-control when invoked from another tmux session.
+    // Keep --switch option for CLI compatibility, but no longer require it.
+    void opts;
+    focusWindow(normalized);
+    switchClient();
+    return;
+  }
+  focusWindow(normalized);
+  attachSession();
 }
 
 export function attachMissionControl(): void {
@@ -94,6 +143,10 @@ export function attachMissionControl(): void {
     throw new Error("tmux is not installed.");
   }
   ensureSession();
+  if (process.env.TMUX) {
+    switchClient();
+    return;
+  }
   attachSession();
 }
 
@@ -106,11 +159,11 @@ export async function pingAgent(agent: string | "all"): Promise<void> {
     }
     return;
   }
-  sendKeys(agent, `echo \"Please refresh status: ${instruction}\"`);
+  sendKeys(normalizeAgentName(agent), `echo \"Please refresh status: ${instruction}\"`);
 }
 
-export async function setStatus(agent: string, patch: Partial<AgentStatus>): Promise<AgentStatus> {
-  return updateStatus(agent, patch);
+export async function setStatus(agent: string, patch: AgentStatusPatch): Promise<AgentStatus> {
+  return updateStatus(normalizeAgentName(agent), patch);
 }
 
 export async function getDashboardState(): Promise<{
@@ -118,7 +171,24 @@ export async function getDashboardState(): Promise<{
   mission: Awaited<ReturnType<typeof readActiveMission>>;
 }> {
   const [agents, mission] = await Promise.all([listStatuses(), readActiveMission()]);
-  return { agents, mission };
+  const tmuxAvailable = hasTmux();
+  const alerts = tmuxAvailable ? listWindowAlerts() : [];
+  const prompts = tmuxAvailable ? listWindowApprovalPrompts() : [];
+  const alertMap = new Map(alerts.map((a) => [canonicalAgentKey(a.window), a]));
+  const promptSet = new Set(
+    prompts.filter((p) => p.approval_prompt).map((p) => canonicalAgentKey(p.window)),
+  );
+  const withAttention = agents.map((a) => {
+    const key = canonicalAgentKey(a.status.agent);
+    const attention = alertMap.get(key);
+    const bell = attention?.bell ?? false;
+    const activity = attention?.activity ?? false;
+    const silence = attention?.silence ?? false;
+    const approval_prompt = promptSet.has(key);
+    if (!bell && !activity && !silence && !approval_prompt) return a;
+    return { ...a, attention: { bell, activity, silence, approval_prompt } };
+  });
+  return { agents: withAttention, mission };
 }
 
 export function watchState(onChange: () => void): () => void {
@@ -157,5 +227,5 @@ export function watchState(onChange: () => void): () => void {
 }
 
 export function statusPathFor(agent: string): string {
-  return getStatusPath(agent);
+  return getStatusPath(normalizeAgentName(agent));
 }

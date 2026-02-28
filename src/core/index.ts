@@ -1,3 +1,5 @@
+export * from "./agentName.js";
+export * from "./agentsMd.js";
 export * from "./engine.js";
 export * from "./mission.js";
 export * from "./paths.js";

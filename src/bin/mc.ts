@@ -41,13 +41,15 @@ program
   .command("start")
   .description("Start an agent")
   .argument("<agent>")
-  .requiredOption("--goal <goal>", "Agent goal")
+  .option("--goal <goal>", "Optional starting goal (agent can define from context)")
   .option("--worktree <name>", "Optional git worktree suffix")
-  .action(async (agent: string, opts: { goal: string; worktree?: string }) => {
+  .action(async (agent: string, opts: { goal?: string; worktree?: string }) => {
     const out = await startAgent({ agent, goal: opts.goal, worktree: opts.worktree });
     console.log(`Agent started: ${agent}`);
     console.log(`Status: ${out.statusPath}`);
-    if (!hasTmux()) {
+    if (hasTmux()) {
+      console.log(`Open session: mc focus ${agent}`);
+    } else {
       console.log("tmux not found; agent bootstrap instruction:");
       console.log(out.bootstrap);
     }
@@ -64,8 +66,9 @@ program
   .command("focus")
   .description("Focus an agent tmux window")
   .argument("<agent>")
-  .action((agent: string) => {
-    focusAgent(agent);
+  .option("--switch", "Deprecated: focus now auto-switches from other tmux sessions")
+  .action((agent: string, opts: { switch?: boolean }) => {
+    focusAgent(agent, { switchClient: Boolean(opts.switch) });
     console.log(`Focused ${agent}`);
   });
 
