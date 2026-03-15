@@ -3,14 +3,38 @@
   "version": "0.1.0",
   "description": "tmux-first mission control for parallel Codex agents",
   "type": "module",
+  "license": "MIT",
+  "main": "./dist/core/index.js",
+  "types": "./dist/core/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    }
+  },
   "bin": {
     "mc": "dist/bin/mc.js",
     "mc-status": "dist/bin/mc-status.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
+  "keywords": [
+    "agents",
+    "codex",
+    "coordination",
+    "dashboard",
+    "tmux",
+    "cli"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/bin/mc.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm test"
   },
   "engines": {
     "node": ">=20"

@@ -15,6 +15,7 @@ function missionControlSection(): string {
     "1. Use `mc-status` commands to keep `.codex/agents/<agent>/status.json` updated.",
     "2. At start and after meaningful progress, run:",
     "   `mc-status set --agent <agent> --summary \"...\" --objective \"...\" --where \"...\"`",
+    "   Also send a heartbeat every 2-3 minutes while actively working.",
     "3. Before asking for manager input, run:",
     "   `mc-status decision --agent <agent> --objective \"...\" --where \"...\" --request \"...\"`",
     "4. When finished, run:",

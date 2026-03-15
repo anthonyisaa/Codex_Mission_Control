@@ -3,6 +3,7 @@ import { agentStatusSchema } from "../src/core/schema.js";
 import { upsertMissionControlContract } from "../src/core/agentsMd.js";
 import { parseGoals } from "../src/core/mission.js";
 import { canonicalAgentKey, normalizeAgentName } from "../src/core/agentName.js";
+import { hasApprovalPrompt, parsePaneInsights } from "../src/core/tmux.js";
 
 describe("mission goal parsing", () => {
   it("splits by semicolon and trims to five", () => {
@@ -158,5 +159,35 @@ describe("AGENTS.md mission-control contract", () => {
     const twice = upsertMissionControlContract(once);
     expect(twice).toBe(once);
     expect(twice).not.toContain("\nOld\n");
+  });
+});
+
+describe("tmux pane insight parsing", () => {
+  it("detects approval prompts from captured pane text", () => {
+    const view = [
+      "Would you like to run the following command?",
+      "Press Enter to confirm or Esc to cancel",
+    ].join("\n");
+    expect(hasApprovalPrompt(view)).toBe(true);
+  });
+
+  it("extracts feedback request and live update line", () => {
+    const view = [
+      "Running e2e smoke tests",
+      "Can you confirm whether to target staging or production?",
+      "> ",
+    ].join("\n");
+    const parsed = parsePaneInsights(view);
+    expect(parsed.feedback_request).toBe("Can you confirm whether to target staging or production?");
+    expect(parsed.last_update).toBe("Can you confirm whether to target staging or production?");
+  });
+
+  it("ignores shell prompts when selecting live update", () => {
+    const view = [
+      "Implemented regression test coverage",
+      "ant@Anthonys-MacBook-Pro mc_demo_cat_boss %",
+    ].join("\n");
+    const parsed = parsePaneInsights(view);
+    expect(parsed.last_update).toBe("Implemented regression test coverage");
   });
 });

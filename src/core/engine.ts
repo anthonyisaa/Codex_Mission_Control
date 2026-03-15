@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { canonicalAgentKey, normalizeAgentName } from "./agentName.js";
 import { ensureAgentsMdContract } from "./agentsMd.js";
 import { AGENTS_DIR, CODEX_DIR, MISSIONS_DIR, getStatusPath } from "./paths.js";
-import { ensureDir } from "./fs.js";
+import { ensureDir, exists } from "./fs.js";
 import { parseGoals, readActiveMission, startDay } from "./mission.js";
 import {
   bootstrapInstruction,
@@ -22,7 +22,7 @@ import {
   focusWindow,
   hasTmux,
   listWindowAlerts,
-  listWindowApprovalPrompts,
+  listWindowInsights,
   paneCurrentCommand,
   sendKeys,
   switchClient,
@@ -34,6 +34,15 @@ function run(cmd: string, args: string[], cwd: string): void {
   if (result.status !== 0) {
     throw new Error(`${cmd} ${args.join(" ")} failed: ${result.stderr?.trim() || "unknown error"}`);
   }
+}
+
+function runResult(cmd: string, args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
+  const result = spawnSync(cmd, args, { cwd, encoding: "utf8" });
+  return {
+    ok: result.status === 0,
+    stdout: result.stdout?.trim() || "",
+    stderr: result.stderr?.trim() || "",
+  };
 }
 
 function shellQuote(value: string): string {
@@ -63,6 +72,48 @@ function makeWorktreePath(repoRoot: string, name: string): string {
   return path.resolve(repoRoot, "..", `${path.basename(repoRoot)}-${name}`);
 }
 
+function ensureGitRepo(repoRoot: string): void {
+  const result = runResult("git", ["rev-parse", "--show-toplevel"], repoRoot);
+  if (!result.ok) {
+    throw new Error("`mc start --worktree` must be run inside a git repository.");
+  }
+}
+
+function gitBranchExists(repoRoot: string, branch: string): boolean {
+  const result = spawnSync("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  return result.status === 0;
+}
+
+async function ensureWorktree(repoRoot: string, worktreePath: string, branch: string): Promise<void> {
+  ensureGitRepo(repoRoot);
+
+  if (await exists(worktreePath)) {
+    if (await exists(path.join(worktreePath, ".git"))) {
+      const currentBranch = runResult("git", ["rev-parse", "--abbrev-ref", "HEAD"], worktreePath);
+      if (currentBranch.ok && currentBranch.stdout === branch) {
+        return;
+      }
+      throw new Error(
+        `Worktree path ${worktreePath} already exists and is not on branch ${branch}.`,
+      );
+    }
+
+    const entries = await fs.readdir(worktreePath);
+    if (entries.length > 0) {
+      throw new Error(`Worktree path ${worktreePath} already exists and is not empty.`);
+    }
+  }
+
+  if (gitBranchExists(repoRoot, branch)) {
+    run("git", ["worktree", "add", worktreePath, branch], repoRoot);
+    return;
+  }
+  run("git", ["worktree", "add", "-b", branch, worktreePath], repoRoot);
+}
+
 export async function startAgent(input: {
   agent: string;
   goal?: string;
@@ -78,12 +129,12 @@ export async function startAgent(input: {
   let cwd = repoRoot;
   if (input.worktree) {
     const wtPath = makeWorktreePath(repoRoot, input.worktree);
-    const branch = `mc/${agent}`;
-    run("git", ["worktree", "add", "-b", branch, wtPath], repoRoot);
+    const branch = `codex/${agent}`;
+    await ensureWorktree(repoRoot, wtPath, branch);
     cwd = wtPath;
   }
 
-  const status = makeInitialStatus(agent, goal, repoRoot, cwd);
+  const status = makeInitialStatus(agent, goal, cwd, cwd);
   const statusPath = await writeStatus(agent, status);
   const bootstrap = bootstrapInstruction(agent, statusPath);
 
@@ -120,22 +171,22 @@ export function focusAgent(agent: string, opts?: { switchClient?: boolean }): vo
   }
   ensureSession();
   ensureWindow(normalized);
-  const insideTmux = Boolean(process.env.TMUX);
+  const current = currentSessionName();
+  const insideTmux = current.length > 0;
   if (insideTmux) {
-    const current = currentSessionName();
     if (current === "codex-mc") {
       focusWindow(normalized);
       return;
     }
-    // Default behavior is to switch into mission-control when invoked from another tmux session.
-    // Keep --switch option for CLI compatibility, but no longer require it.
-    void opts;
     focusWindow(normalized);
-    switchClient();
+    // Only switch sessions when explicitly requested.
+    if (opts?.switchClient) {
+      switchClient();
+    }
     return;
   }
   focusWindow(normalized);
-  attachSession();
+  attachSession(undefined, { clearTmuxEnv: true });
 }
 
 export function attachMissionControl(): void {
@@ -143,11 +194,11 @@ export function attachMissionControl(): void {
     throw new Error("tmux is not installed.");
   }
   ensureSession();
-  if (process.env.TMUX) {
+  if (currentSessionName()) {
     switchClient();
     return;
   }
-  attachSession();
+  attachSession(undefined, { clearTmuxEnv: true });
 }
 
 export async function pingAgent(agent: string | "all"): Promise<void> {
@@ -173,22 +224,53 @@ export async function getDashboardState(): Promise<{
   const [agents, mission] = await Promise.all([listStatuses(), readActiveMission()]);
   const tmuxAvailable = hasTmux();
   const alerts = tmuxAvailable ? listWindowAlerts() : [];
-  const prompts = tmuxAvailable ? listWindowApprovalPrompts() : [];
+  const insights = tmuxAvailable ? listWindowInsights() : [];
   const alertMap = new Map(alerts.map((a) => [canonicalAgentKey(a.window), a]));
-  const promptSet = new Set(
-    prompts.filter((p) => p.approval_prompt).map((p) => canonicalAgentKey(p.window)),
-  );
+  const insightMap = new Map(insights.map((i) => [canonicalAgentKey(i.window), i]));
   const withAttention = agents.map((a) => {
     const key = canonicalAgentKey(a.status.agent);
     const attention = alertMap.get(key);
+    const insight = insightMap.get(key);
     const bell = attention?.bell ?? false;
     const activity = attention?.activity ?? false;
     const silence = attention?.silence ?? false;
-    const approval_prompt = promptSet.has(key);
-    if (!bell && !activity && !silence && !approval_prompt) return a;
-    return { ...a, attention: { bell, activity, silence, approval_prompt } };
+    const approval_prompt = insight?.approval_prompt ?? false;
+    const feedback_request = insight?.feedback_request ?? "";
+    const last_update = insight?.last_update ?? "";
+    if (!bell && !activity && !silence && !approval_prompt && !feedback_request && !last_update) return a;
+    return {
+      ...a,
+      attention: {
+        bell,
+        activity,
+        silence,
+        approval_prompt,
+        feedback_request,
+        last_update,
+      },
+    };
   });
-  return { agents: withAttention, mission };
+  const prioritized = withAttention.sort((a, b) => {
+    const aDecision = Number(
+      a.status.needs_input ||
+        a.status.state === "needs_input" ||
+        a.status.manager.request ||
+        a.status.question ||
+        a.attention?.approval_prompt ||
+        a.attention?.feedback_request,
+    );
+    const bDecision = Number(
+      b.status.needs_input ||
+        b.status.state === "needs_input" ||
+        b.status.manager.request ||
+        b.status.question ||
+        b.attention?.approval_prompt ||
+        b.attention?.feedback_request,
+    );
+    if (aDecision !== bDecision) return bDecision - aDecision;
+    return a.status.agent.localeCompare(b.status.agent);
+  });
+  return { agents: prioritized, mission };
 }
 
 export function watchState(onChange: () => void): () => void {

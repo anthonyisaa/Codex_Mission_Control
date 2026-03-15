@@ -41,6 +41,8 @@ export interface AgentSummary {
     activity: boolean;
     silence: boolean;
     approval_prompt: boolean;
+    feedback_request?: string;
+    last_update?: string;
   };
 }
 

@@ -168,6 +168,7 @@ export function bootstrapInstruction(agent: string, statusPath: string): string 
     `You are agent ${agent}.`,
     `Status file: ${statusPath}`,
     "Update this JSON at start, after meaningful steps, when blocked, before asking for help, and when done.",
+    "Send a heartbeat update at least every 2-3 minutes while actively working.",
     "When asking for a decision, always set manager.objective, manager.where, and manager.request.",
     "Keep summary concise. Set needs_input=true when you need user action.",
     "Preferred: run `mc-status` commands instead of manual edits.",

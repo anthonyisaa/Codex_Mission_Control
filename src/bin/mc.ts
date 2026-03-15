@@ -66,7 +66,7 @@ program
   .command("focus")
   .description("Focus an agent tmux window")
   .argument("<agent>")
-  .option("--switch", "Deprecated: focus now auto-switches from other tmux sessions")
+  .option("--switch", "Switch tmux client to mission-control session")
   .action((agent: string, opts: { switch?: boolean }) => {
     focusAgent(agent, { switchClient: Boolean(opts.switch) });
     console.log(`Focused ${agent}`);
